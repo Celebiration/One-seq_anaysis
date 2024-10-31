@@ -39,12 +39,13 @@ aligner = PairwiseAligner(mode="local", match_score=1.0, mismatch_score=-1.0, op
 def seq_is_in_ref(seq, ref, max_penalty = 5):
 	if seq in ref:
 		return (True, next(re.finditer(seq,ref)).span())
-	alignment = aligner.align(ref, seq)[0]
-	unaligned_len = len(seq) - (alignment.coordinates[1][-1] - alignment.coordinates[1][0])
-	if len(seq) - alignment.score + unaligned_len > 5:
-		return (False, (None, None))
-	else:
-		return(True, (alignment.coordinates[0][0], alignment.coordinates[0][-1]))
+	alignments = aligner.align(ref, seq)
+	if len(alignments):
+		alignment=alignments[0]
+		unaligned_len = len(seq) - (alignment.coordinates[1][-1] - alignment.coordinates[1][0])
+		if len(seq) - alignment.score + unaligned_len <= 5:
+			return(True, (alignment.coordinates[0][0], alignment.coordinates[0][-1]))
+	return (False, (None, None))
 	
 class seq_obj:
 	def __init__(self, sequence):
@@ -61,7 +62,7 @@ class seq_obj:
 		self.target_ = None
 		self.target = None
 		self.targetid = None
-		self.target_coverage = (None, None)
+		self.target_coverage = None
 		self.target_matched = None
 
 
@@ -101,11 +102,20 @@ for record in SeqIO.parse(fq, "fastq"):
 		tmp.constant5_ = constant5_
 		tmp.constant6_ = constant6_
 	if sum([i[0] for i in [tmp.constant1_, tmp.constant2_, tmp.constant3_, tmp.constant4_, tmp.constant5_, tmp.constant6_]]) == 0:
-		res.append((tmp.cate, tmp.constant1_[0], tmp.constant2_[0], tmp.constant3_[0], tmp.constant4_[0], tmp.constant5_[0], tmp.constant6_[0], tmp.umi_, tmp.barcode_, tmp.target_, tmp.targetid, tmp.target, tmp.target_coverage, tmp.target_matched))
+		res.append((tmp.cate, 0, 0, 0, 0, 0, 0, tmp.umi_, tmp.barcode_, tmp.target_, tmp.targetid, tmp.target, tmp.target_coverage, tmp.target_matched))
 		continue
 	if sum([i[0] for i in [tmp.constant1_, tmp.constant2_, tmp.constant3_]]) > 0 and sum([i[0] for i in [tmp.constant4_, tmp.constant5_, tmp.constant6_]]) > 0:
 		tmp.cate = "uncut"
-		res.append((tmp.cate, tmp.constant1_[0], tmp.constant2_[0], tmp.constant3_[0], tmp.constant4_[0], tmp.constant5_[0], tmp.constant6_[0], tmp.umi_, tmp.barcode_, tmp.target_, tmp.targetid, tmp.target, tmp.target_coverage, tmp.target_matched))
+		if tmp.constant2_[0] and tmp.constant3_[0]:
+			tmp.barcode_ = tmp.seq[tmp.constant2_[1][1]:tmp.constant3_[1][0]]
+		elif tmp.constant4_[0] and tmp.constant5_[0]:
+			tmp.barcode_ = tmp.seq[tmp.constant4_[1][1]:tmp.constant5_[1][0]]
+		else:
+			tmp.barcode_ = None
+		if tmp.barcode_ and tmp.barcode_ in barcode_to_id.keys():
+			tmp.targetid = barcode_to_id[tmp.barcode_]
+			tmp.target = barcode_to_target[tmp.barcode_]
+		res.append((tmp.cate, 1 if tmp.constant1_[0] else 0, 1 if tmp.constant2_[0] else 0, 1 if tmp.constant3_[0] else 0, 1 if tmp.constant4_[0] else 0, 1 if tmp.constant5_[0] else 0, 1 if tmp.constant6_[0] else 0, tmp.umi_, tmp.barcode_, tmp.target_, tmp.targetid, tmp.target, tmp.target_coverage, tmp.target_matched))
 		continue
 	if sum([i[0] for i in [tmp.constant1_, tmp.constant2_, tmp.constant3_]]) > sum([i[0] for i in [tmp.constant4_, tmp.constant5_, tmp.constant6_]]):
 		#说明是proto side而非PAM side
@@ -137,8 +147,8 @@ for record in SeqIO.parse(fq, "fastq"):
 		else:
 			tmp.target_ = None
 	#匹配barcode
-	if tmp.barcode_ in barcode_to_id.keys():
-		tmp.targetid = barcode_to_id[tmp.barcode_]
+	if tmp.barcode_ and tmp.barcode_ in barcode_to_id.keys():
+		tmp.targetid = barcode_to_id.get[tmp.barcode_]
 		tmp.target = barcode_to_target[tmp.barcode_]
 	#比对target
 	if tmp.target_ and tmp.targetid:
@@ -148,17 +158,17 @@ for record in SeqIO.parse(fq, "fastq"):
 			#检查比对坐标是否match
 			if tmp.cate == "proto_side":
 				if tmp.target_coverage[0] == 0 and abs(tmp.target_coverage[1] - fwd_cut_site) <= fwd_tolerate:
-					tmp.target_matched = True
+					tmp.target_matched = 1
 				else:
-					tmp.target_matched = False
+					tmp.target_matched = 0
 			else:
 				if tmp.target_coverage[1] == len(tmp.target) and abs(tmp.target_coverage[0] - rev_cut_site) <= rev_tolerate:
-					tmp.target_matched = True
+					tmp.target_matched = 1
 				else:
-					tmp.target_matched = False
+					tmp.target_matched = 0
 	#检查是否有A-to-G
 	#...
-	res.append((tmp.cate, tmp.constant1_[0], tmp.constant2_[0], tmp.constant3_[0], tmp.constant4_[0], tmp.constant5_[0], tmp.constant6_[0], tmp.umi_, tmp.barcode_, tmp.target_, tmp.targetid, tmp.target, tmp.target_coverage, tmp.target_matched))
+	res.append((tmp.cate, 1 if tmp.constant1_[0] else 0, 1 if tmp.constant2_[0] else 0, 1 if tmp.constant3_[0] else 0, 1 if tmp.constant4_[0] else 0, 1 if tmp.constant5_[0] else 0, 1 if tmp.constant6_[0] else 0, tmp.umi_, tmp.barcode_, tmp.target_, tmp.targetid, tmp.target, tmp.target_coverage, tmp.target_matched))
 	
 res = pd.DataFrame(res, columns=["type","constant1","constant2","constant3","constant4","constant5","constant6","umi","barcode","target_seq","targetid","target","target_coverage","target_matched"])
 res.to_csv(output_file, index=False)
